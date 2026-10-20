@@ -3,7 +3,13 @@ name: booking-watch
 on:
   schedule:
     - cron: "4,14,24,34,44,54 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test_telegram:
+        description: "Send a Telegram test message only (skip the booking check)"
+        required: false
+        type: boolean
+        default: false
 
 # Allow the workflow to commit the updated state file back to the repo.
 permissions:
@@ -30,6 +36,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TEST_MODE: ${{ inputs.test_telegram }}
           # Route through an India egress so BookMyShow doesn't 403 the
           # US-based GitHub runner. Set SCRAPERAPI_KEY (or PROXY_URL) as a secret.
           SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
@@ -37,6 +44,7 @@ jobs:
         run: python poller.py
 
       - name: Persist state
+        if: ${{ !inputs.test_telegram }}
         run: |
           if [[ -n "$(git status --porcelain state.json)" ]]; then
             git config user.name "booking-watch-bot"
