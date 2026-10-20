@@ -4,6 +4,6 @@
   "requested_date": "20261024",
   "venue_code": "INTO",
   "venue_label": "INOX: The Marina Mall, OMR",
-  "url_template": "https://in.bookmyshow.com/movies/chennai/jailer-2/buytickets/ET00521160/{date}",
+  "url_template": "https://in.bookmyshow.com/cinemas/chennai/inox-the-marina-mall-omr/buytickets/INTO/{date}",
   "min_references": 10
 }
