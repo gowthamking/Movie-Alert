@@ -1,9 +1,9 @@
 {
   "detector": "venue_date",
-  "movie": "Jailer 2 - (Tamil)",
+  "movie": "Jailer 2 - Tamil",
   "requested_date": "20261024",
   "venue_code": "INTO",
-  "venue_label": "INOX: The Marina Mall, OMR",
+  "venue_label": "INOX: The Marina Mall, OMR, Chennai",
   "url_template": "https://in.bookmyshow.com/cinemas/chennai/inox-the-marina-mall-omr/buytickets/INTO/{date}",
   "min_references": 10
 }
