@@ -260,9 +260,13 @@ def main():
     try:
         page = fetch(cfg)
     except requests.RequestException as exc:
-        # Transient network/blocking errors shouldn't crash the workflow.
         print(f"[{label}] fetch failed: {exc}")
         return 0
+
+    print(f"Fetched page length: {len(page)} characters")
+    print(f"Expected venue/date pattern found: {'/INTO/' + cfg['requested_date'] in page}")
+    print(f"Movie name found: {'Jailer 2' in page}")
+    print(f"Response contains BookMyShow: {'bookmyshow' in page.lower()}")
 
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
