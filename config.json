@@ -6,6 +6,6 @@
   "region_code": "CHEN",
   "event_code": "ET00518674",
   "venue_label": "INOX: The Marina Mall, OMR, Chennai",
-  "url_template": "https://in.bookmyshow.com/api/v3/mobile/showtimes/byvenue?dateCode={date}&venueCode=INTO&regionCode=CHEN&memberId=&appCode=WEBV2&lsId=",
-  "min_references": 10
+  "url_template": "YOUR_EXISTING_API_URL_TEMPLATE",
+  "booking_url": "https://in.bookmyshow.com/cinemas/chennai/inox-the-marina-mall-omr/buytickets/INTO/20261024"
 }
