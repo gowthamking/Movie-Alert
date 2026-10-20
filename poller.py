@@ -265,20 +265,6 @@ def main():
 
     print(f"Fetched page length: {len(page)} characters")
 
-    # Inspect venue/date booking URL patterns without printing the whole page.
-    venue_patterns = re.findall(
-        r"/cinemas/chennai/[^\"'\\s<>]+/buytickets/[^\"'\\s<>]+",
-        page,
-        flags=re.IGNORECASE,
-    )
-
-    print(f"Venue booking URL patterns found: {len(venue_patterns)}")
-
-    for pattern in venue_patterns[:15]:
-        print(f"Venue URL: {pattern[:300]}")
-
-
-
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
 
