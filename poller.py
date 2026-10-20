@@ -268,6 +268,9 @@ def main():
     print("Venue code present:", "INTO" in page)
     print("Target date present:", "20261024" in page)
     print("Listing URL present:", "/buytickets/INTO/20261024" in page)
+    for term in ("INTO", "20261024"):
+    pos = page.find(term)
+    print(f"First occurrence of {term}: {page[max(0, pos-200):pos+300] if pos >= 0 else 'NOT FOUND'}")
 
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
