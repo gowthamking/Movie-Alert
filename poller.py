@@ -190,20 +190,66 @@ def is_available_bms_date(page_text, cfg):
 
 def is_available_venue_date(page_text, cfg):
     """
-    Theatre-specific detector: is a given venue bookable on a given date?
+    Detect showtimes for the configured movie on the exact requested date
+    at a venue-specific BookMyShow page.
 
-    BMS renders a per-venue booking link like
-        /cinemas/chennai/<slug>/buytickets/<venueCode>/<date>
-    only when that venue has live shows for that exact date. Because the date
-    is baked into the link, it can't be confused with the silent fallback
-    (a fallback page carries /<code>/<fallbackDate>, not /<code>/<ourDate>).
-
-    Set venue_code (one) or venue_codes (list). With a list, it's open when
-    ANY of them is bookable for the date.
+    BookMyShow may silently display the nearest date that has showtimes when
+    the requested date has not opened. The canonical URL identifies the date
+    actually being displayed, so require it to match both the venue code and
+    requested date. Then require the configured movie and a time-like showtime
+    near that movie's listing.
     """
-    date = cfg["requested_date"]
-    codes = cfg.get("venue_codes") or [cfg["venue_code"]]
-    return any("/{}/{}".format(code, date) in page_text for code in codes)
+    requested_date = str(cfg["requested_date"])
+    codes = cfg.get("venue_codes") or [cfg.get("venue_code", "")]
+    codes = [str(code) for code in codes if code]
+
+    # Prefer the canonical URL: on fallback pages it can still point to an
+    # earlier date even when the browser was asked to open a later date.
+    canonical_url = ""
+    for tag_match in re.finditer(r"<link\b[^>]*>", page_text, re.IGNORECASE):
+        tag = tag_match.group(0)
+        rel_match = re.search(r"""\brel\s*=\s*["']([^"']+)["']""", tag, re.IGNORECASE)
+        href_match = re.search(r"""\bhref\s*=\s*["']([^"']+)["']""", tag, re.IGNORECASE)
+        if rel_match and href_match and rel_match.group(1).lower() == "canonical":
+            canonical_url = href_match.group(1)
+            break
+    canonical_path = urllib.parse.urlparse(canonical_url).path
+
+    correct_venue_date = any(
+        re.search(
+            rf"/buytickets/{re.escape(code)}/{re.escape(requested_date)}(?:/|$)",
+            canonical_path,
+            re.IGNORECASE,
+        )
+        for code in codes
+    )
+
+    # If the canonical URL is absent, fail closed rather than announcing based
+    # on a date token somewhere in the navigation strip.
+    if not correct_venue_date:
+        print(f"Canonical path: {canonical_path or '(not found)'}")
+        print("Requested venue/date is not the canonical page; treating as unavailable.")
+        return False
+
+    movie = (cfg.get("movie") or "").strip()
+    if not movie:
+        return False
+
+    # Search around the movie's listing for a showtime such as "07:05 PM".
+    # This avoids treating a movie link in generic navigation as a booking.
+    normalized_page = re.sub(r"\s+", " ", page_text)
+    movie_pattern = re.compile(re.escape(movie), re.IGNORECASE)
+    showtime_pattern = re.compile(
+        r"\b(?:0?[1-9]|1[0-2]):[0-5]\d\s*(?:AM|PM)\b",
+        re.IGNORECASE,
+    )
+
+    for match in movie_pattern.finditer(normalized_page):
+        context = normalized_page[match.start():match.start() + 5000]
+        if showtime_pattern.search(context):
+            return True
+
+    return False
 
 
 def is_available(page_text, cfg):
@@ -267,29 +313,9 @@ def main():
     venue_code = cfg.get("venue_code", "")
     requested_date = cfg.get("requested_date", "")
 
-    print("Venue code present:", bool(venue_code) and venue_code in page)
-    print("Target date present:", bool(requested_date) and requested_date in page)
+    print("Venue code configured:", bool(venue_code))
+    print("Requested date:", requested_date or "(not configured)")
 
-    if venue_code and requested_date:
-        print(
-            "Exact venue/date path present:",
-            f"/{venue_code}/{requested_date}" in page,
-        )
-
-    # Calculate availability before logging or using the variable.
-
-    # Temporary diagnostic: inspect the theatre's page content.
-    print("Checking Marina Mall theatre details...")
-
-    for term in ["Marina Mall", "INOX", "ET00518674", "ET00521160"]:
-        matches = list(re.finditer(term, page, re.IGNORECASE))
-        print(f"{term}: {len(matches)} occurrence(s)")
-
-        for match in matches[:2]:
-            start = max(0, match.start() - 200)
-            end = min(len(page), match.end() + 500)
-            print(f"Context for {term}: {page[start:end]}")
-    
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
 
