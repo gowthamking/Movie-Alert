@@ -265,6 +265,10 @@ def main():
 
     print(f"Fetched page length: {len(page)} characters")
 
+    print("Venue code present:", "INTO" in page)
+    print("Target date present:", "20261024" in page)
+    print("Listing URL present:", "/buytickets/INTO/20261024" in page)
+
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
 
