@@ -264,13 +264,20 @@ def main():
         return 0
 
 
-    print("Venue code present:", cfg["venue_code"] in page)
-    print("Target date present:", cfg["requested_date"] in page)
-    print(
-       "Exact venue/date path present:",
-       f"/{cfg['venue_code']}/{cfg['requested_date']}" in page
-)
+    venue_code = cfg.get("venue_code", "")
+    requested_date = cfg.get("requested_date", "")
 
+    print("Venue code present:", bool(venue_code) and venue_code in page)
+    print("Target date present:", bool(requested_date) and requested_date in page)
+
+    if venue_code and requested_date:
+        print(
+            "Exact venue/date path present:",
+            f"/{venue_code}/{requested_date}" in page,
+        )
+
+    # Calculate availability before logging or using the variable.
+    available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
 
     if available and not state.get("available"):
