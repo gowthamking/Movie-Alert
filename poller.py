@@ -263,9 +263,14 @@ def main():
         print(f"[{label}] fetch failed: {exc}")
         return 0
 
-    print(f"Fetched page length: {len(page)} characters")
 
-    available = is_available(page, cfg)
+    print("Venue code present:", cfg["venue_code"] in page)
+    print("Target date present:", cfg["requested_date"] in page)
+    print(
+       "Exact venue/date path present:",
+       f"/{cfg['venue_code']}/{cfg['requested_date']}" in page
+)
+
     print(f"[{label}] available={available} (was {state.get('available')})")
 
     if available and not state.get("available"):
