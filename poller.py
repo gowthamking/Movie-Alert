@@ -124,15 +124,11 @@ def _walk(value):
 
 
 def is_available_api_json(response_text, cfg):
-    """Confirm the requested date is enabled and the target event has showtimes."""
+    """Require the exact requested date to be enabled and the target event to have showtimes."""
     try:
         payload = json.loads(response_text)
-    except (json.JSONDecodeError, TypeError) as exc:
-        print(f"API detector: response was not valid JSON ({type(exc).__name__}); treating as unavailable.")
-        return False
-
-    if not isinstance(payload, dict):
-        print(f"API detector: expected a JSON object, got {type(payload).__name__}.")
+    except (json.JSONDecodeError, TypeError):
+        print("API detector: response was not valid JSON; treating as unavailable.")
         return False
 
     requested = str(cfg["requested_date"])
@@ -141,107 +137,64 @@ def is_available_api_json(response_text, cfg):
     event_code = str(cfg.get("event_code", ""))
     movie_name = (cfg.get("movie") or "").strip().casefold()
 
-    print("API diagnostics: top-level keys =", ", ".join(map(str, payload.keys())))
-
-    # If response metadata includes venue/region, reject mismatches.
-    for key, expected in (
-        ("VenueCode", venue_code), ("venueCode", venue_code),
-        ("RegionCode", region_code), ("regionCode", region_code),
-    ):
-        actual = payload.get(key)
-        if actual not in (None, "") and expected and str(actual).casefold() != expected.casefold():
-            print(f"API detector: {key} mismatch (received {actual!r}, expected {expected!r}); unavailable.")
+    # If response metadata includes a venue/region, reject mismatches.
+    for key, expected in (("VenueCode", venue_code), ("venueCode", venue_code),
+                          ("RegionCode", region_code), ("regionCode", region_code)):
+        actual = payload.get(key) if isinstance(payload, dict) else None
+        if actual and expected and str(actual).casefold() != expected.casefold():
+            print(f"API detector: {key} mismatch; treating as unavailable.")
             return False
 
     date_entries = []
-    for key in ("ShowDatesArray", "showDatesArray", "show_dates", "dates"):
-        candidate = payload.get(key)
-        if isinstance(candidate, list):
-            date_entries = candidate
-            print(f"API diagnostics: found {len(date_entries)} date entries in {key}.")
-            break
-
-    def date_value(item):
-        if not isinstance(item, dict):
-            return ""
-        for key in ("DateCode", "dateCode", "Date", "date", "ShowDate", "showDate"):
-            value = item.get(key)
-            if value not in (None, ""):
-                return str(value)
-        return ""
-
-    # Print the date/status pairs so the Actions log proves what the API returned.
-    date_summary = [
-        (date_value(item), item.get("isDisabled", item.get("IsDisabled", "(missing)")))
-        for item in date_entries if isinstance(item, dict)
-    ]
-    print("API diagnostics: date/status entries =", date_summary[:20])
-
+    if isinstance(payload, dict):
+        for key in ("ShowDatesArray", "showDatesArray", "show_dates", "dates"):
+            if isinstance(payload.get(key), list):
+                date_entries = payload[key]
+                break
     date_entry = next(
-        (item for item in date_entries
-         if isinstance(item, dict) and date_value(item) == requested),
+        (item for item in date_entries if isinstance(item, dict) and
+         str(item.get("DateCode", item.get("dateCode", item.get("Date", item.get("date", ""))))) == requested),
         None,
     )
     if date_entry is None:
-        print(f"API detector: requested date {requested} not found in date list; unavailable.")
+        print(f"API detector: requested date {requested} not found in date list.")
         return False
 
     disabled = date_entry.get("isDisabled", date_entry.get("IsDisabled", False))
-    print(f"API diagnostics: requested date {requested}, raw isDisabled={disabled!r} "
-          f"(type={type(disabled).__name__}).")
     if disabled is True or str(disabled).strip().lower() in ("true", "1", "yes"):
-        print(f"API detector: requested date {requested} is disabled; unavailable.")
+        print(f"API detector: requested date {requested} is still disabled.")
         return False
 
-    show_details = payload.get("ShowDetails", payload.get("showDetails", []))
+    # Only inspect the ShowDetails section for the exact requested date, not fallback dates.
+    show_details = payload.get("ShowDetails", payload.get("showDetails", [])) if isinstance(payload, dict) else []
     if isinstance(show_details, dict):
         show_details = [show_details]
-    if not isinstance(show_details, list):
-        print("API detector: ShowDetails is missing or not a list; unavailable.")
-        return False
+    exact_date_sections = []
+    for section in show_details if isinstance(show_details, list) else []:
+        if not isinstance(section, dict):
+            continue
+        section_date = str(section.get("Date", section.get("DateCode", section.get("date", section.get("dateCode", "")))))
+        if section_date == requested:
+            exact_date_sections.append(section)
 
-    detail_dates = [
-        date_value(section) for section in show_details if isinstance(section, dict)
-    ]
-    print("API diagnostics: ShowDetails dates =", detail_dates)
-
-    exact_date_sections = [
-        section for section in show_details
-        if isinstance(section, dict) and date_value(section) == requested
-    ]
     if not exact_date_sections:
-        print(f"API detector: no ShowDetails for exact date {requested}; fallback dates ignored.")
+        print(f"API detector: no show details for exact date {requested}; fallback dates are ignored.")
         return False
 
-    event_seen = False
     for section in exact_date_sections:
         for item in _walk(section):
             code = str(item.get("EventCode", item.get("eventCode", "")))
-            name = str(item.get("EventName", item.get("eventName",
-                        item.get("Name", item.get("name", ""))))).casefold()
-            matches_event = (
-                (bool(event_code) and code == event_code)
-                or (bool(movie_name) and movie_name in name)
-            )
+            name = str(item.get("EventName", item.get("eventName", item.get("Name", item.get("name", ""))))).casefold()
+            if event_code and code and code != event_code:
+                continue
+            matches_event = (bool(event_code) and code == event_code) or (bool(movie_name) and movie_name in name)
             if not matches_event:
                 continue
-
-            event_seen = True
-            showtimes = item.get(
-                "ShowTimes",
-                item.get("showTimes", item.get("Showtimes", item.get("showtimes")))
-            )
-            count = len(showtimes) if isinstance(showtimes, list) else 0
-            print(f"API diagnostics: target event matched (code={code!r}, name={name!r}); "
-                  f"showtimes={count}.")
-            if count > 0:
-                print(f"API detector: found {count} showtimes for target event on {requested}.")
+            showtimes = item.get("ShowTimes", item.get("showTimes", item.get("Showtimes", item.get("showtimes"))))
+            if isinstance(showtimes, list) and len(showtimes) > 0:
+                print(f"API detector: found {len(showtimes)} showtimes for target event on {requested}.")
                 return True
-
-    if not event_seen:
-        print(f"API diagnostics: target event not found in ShowDetails for {requested} "
-              f"(event_code={event_code!r}, movie={movie_name!r}).")
-    print(f"API detector: no showtimes for the target event on {requested}; unavailable.")
+    print(f"API detector: no showtimes for the target event on {requested}.")
     return False
 
 
@@ -305,6 +258,29 @@ def is_available(response_text, cfg):
 
 def main():
     cfg = load_config()
+
+    # Manual Telegram test mode: sends one test message and exits before
+    # fetching BookMyShow or reading/writing state.json.
+    if os.environ.get("TELEGRAM_TEST_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+        requested_date = str(cfg.get("requested_date", ""))
+        pretty_date = (
+            f"{requested_date[6:8]}-{requested_date[4:6]}-{requested_date[0:4]}"
+            if len(requested_date) == 8 and requested_date.isdigit()
+            else requested_date or "not configured"
+        )
+        venue = cfg.get("venue_label") or cfg.get("theatre") or cfg.get("venue_code", "target")
+        message = (
+            "✅ Telegram test successful!\\n\\n"
+            "GitHub Actions can send messages to this chat.\\n\\n"
+            f"Movie: {cfg.get('movie', 'Jailer 2 - Tamil')}\\n"
+            f"Theatre: {venue}\\n"
+            f"Target date: {pretty_date}\\n\\n"
+            "This was a test only; booking status and state.json were not changed."
+        )
+        send_telegram(cfg["telegram_bot_token"], cfg["telegram_chat_id"], message)
+        print("Telegram test message sent successfully. Booking check and state tracking were skipped.")
+        return 0
+
     state = load_json(STATE_PATH, default={"available": False}) or {"available": False}
     label = f"{cfg.get('movie', 'movie')} @ {cfg.get('theatre', cfg.get('venue_code', 'target'))}"
 
