@@ -277,6 +277,19 @@ def main():
         )
 
     # Calculate availability before logging or using the variable.
+
+    # Temporary diagnostic: inspect the theatre's page content.
+    print("Checking Marina Mall theatre details...")
+
+    for term in ["Marina Mall", "INOX", "ET00518674", "ET00521160"]:
+        matches = list(re.finditer(term, page, re.IGNORECASE))
+        print(f"{term}: {len(matches)} occurrence(s)")
+
+        for match in matches[:2]:
+            start = max(0, match.start() - 200)
+            end = min(len(page), match.end() + 500)
+            print(f"Context for {term}: {page[start:end]}")
+    
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
 
