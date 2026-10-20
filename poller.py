@@ -277,12 +277,7 @@ def main():
     for pattern in venue_patterns[:15]:
         print(f"Venue URL: {pattern[:300]}")
 
-    print(
-        "Expected venue/date pattern found:",
-        f"/{cfg['venue_code']}/{cfg['requested_date']}" in page,
-    )
-    print(f"Movie name found: {'Jailer 2' in page}")
-    print(f"Response contains BookMyShow: {'bookmyshow' in page.lower()}")
+
 
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
