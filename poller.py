@@ -265,17 +265,6 @@ def main():
 
     print(f"Fetched page length: {len(page)} characters")
 
-    print("Venue code present:", "INTO" in page)
-    print("Target date present:", "20261024" in page)
-    print("Listing URL present:", "/buytickets/INTO/20261024" in page)
-
-for term in ("INTO", "20261024"):
-    pos = page.find(term)
-    print(
-        f"First occurrence of {term}: "
-        f"{page[max(0, pos-200):pos+300] if pos >= 0 else 'NOT FOUND'}"
-    )
-
     available = is_available(page, cfg)
     print(f"[{label}] available={available} (was {state.get('available')})")
 
@@ -285,6 +274,7 @@ for term in ("INTO", "20261024"):
             pretty = f"{rd[6:8]}-{rd[4:6]}-{rd[0:4]}"
             venue = cfg.get("venue_label") or cfg.get("venue_code") or ""
             venue_line = f"Theatre: {venue}\n" if venue else ""
+
             msg = (
                 f"🎬 Booking just OPENED!\n\n"
                 f"{cfg.get('movie', 'Movie')}\n"
@@ -299,7 +289,12 @@ for term in ("INTO", "20261024"):
                 f"Theatre: {cfg['theatre']}\n\n"
                 f"Book here: {cfg['target_url']}"
             )
-        send_telegram(cfg["telegram_bot_token"], cfg["telegram_chat_id"], msg)
+
+        send_telegram(
+            cfg["telegram_bot_token"],
+            cfg["telegram_chat_id"],
+            msg
+        )
         print(f"[{label}] notification sent")
 
     # Persist current state so we don't re-alert every run.
