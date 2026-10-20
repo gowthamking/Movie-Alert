@@ -264,7 +264,23 @@ def main():
         return 0
 
     print(f"Fetched page length: {len(page)} characters")
-    print(f"Expected venue/date pattern found: {'/INTO/' + cfg['requested_date'] in page}")
+
+    # Inspect venue/date booking URL patterns without printing the whole page.
+    venue_patterns = re.findall(
+        r"/cinemas/chennai/[^\"'\\s<>]+/buytickets/[^\"'\\s<>]+",
+        page,
+        flags=re.IGNORECASE,
+    )
+
+    print(f"Venue booking URL patterns found: {len(venue_patterns)}")
+
+    for pattern in venue_patterns[:15]:
+        print(f"Venue URL: {pattern[:300]}")
+
+    print(
+        "Expected venue/date pattern found:",
+        f"/{cfg['venue_code']}/{cfg['requested_date']}" in page,
+    )
     print(f"Movie name found: {'Jailer 2' in page}")
     print(f"Response contains BookMyShow: {'bookmyshow' in page.lower()}")
 
