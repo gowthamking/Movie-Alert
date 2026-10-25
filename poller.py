@@ -207,27 +207,84 @@ def is_available_bms_date(page_text, cfg):
     return counts.most_common(1)[0][0] == requested and counts.get(requested, 0) >= cfg.get("min_references", 10)
 
 
+
 def is_available_venue_date(page_text, cfg):
+    """
+    Check whether the exact requested venue/date page contains
+    an IMAX screening with a showtime.
+    """
     requested_date = str(cfg["requested_date"])
     codes = cfg.get("venue_codes") or [cfg.get("venue_code", "")]
+
+    # Find the canonical URL to verify the exact venue and date.
     canonical_url = ""
+
     for match in re.finditer(r"<link\b[^>]*>", page_text, re.IGNORECASE):
         tag = match.group(0)
-        rel = re.search(r"\brel\s*=\s*[\"']([^\"']+)[\"']", tag, re.IGNORECASE)
-        href = re.search(r"\bhref\s*=\s*[\"']([^\"']+)[\"']", tag, re.IGNORECASE)
+
+        rel = re.search(
+            r"\brel\s*=\s*[\"']([^\"']+)[\"']",
+            tag,
+            re.IGNORECASE,
+        )
+        href = re.search(
+            r"\bhref\s*=\s*[\"']([^\"']+)[\"']",
+            tag,
+            re.IGNORECASE,
+        )
+
         if rel and href and rel.group(1).lower() == "canonical":
             canonical_url = href.group(1)
             break
+
     path = urllib.parse.urlparse(canonical_url).path
-    if not any(re.search(rf"/buytickets/{re.escape(str(code))}/{re.escape(requested_date)}(?:/|$)", path, re.I) for code in codes if code):
-        print(f"Canonical path {path or '(not found)'} does not match requested venue/date.")
+
+    exact_venue_date = any(
+        re.search(
+            rf"/buytickets/{re.escape(str(code))}/"
+            rf"{re.escape(requested_date)}(?:/|$)",
+            path,
+            re.IGNORECASE,
+        )
+        for code in codes
+        if code
+    )
+
+    if not exact_venue_date:
+        print(
+            f"IMAX detector: canonical venue/date mismatch. "
+            f"Found path: {path or '(not found)'}"
+        )
         return False
+
+    # Normalize whitespace in the fetched page.
     normalized = re.sub(r"\s+", " ", page_text)
-    movie = re.escape((cfg.get("movie") or "").strip())
-    times = re.compile(r"\b(?:0?[1-9]|1[0-2]):[0-5]\d\s*(?:AM|PM)\b", re.I)
-    for match in re.finditer(movie, normalized, re.I):
-        if times.search(normalized[match.start():match.start() + 5000]):
+
+    # Look for an IMAX label with a nearby showtime.
+    imax_pattern = re.compile(r"\bIMAX(?:\s+2D)?\b", re.IGNORECASE)
+
+    time_pattern = re.compile(
+        r"\b(?:0?[1-9]|1[0-2]):[0-5]\d\s*(?:AM|PM)\b",
+        re.IGNORECASE,
+    )
+
+    for match in imax_pattern.finditer(normalized):
+        start = max(0, match.start() - 500)
+        end = min(len(normalized), match.end() + 500)
+
+        nearby_text = normalized[start:end]
+
+        if time_pattern.search(nearby_text):
+            print(
+                f"IMAX detector: found an IMAX label and a nearby "
+                f"showtime for {requested_date}."
+            )
             return True
+
+    print(
+        f"IMAX detector: no IMAX screening with a nearby showtime "
+        f"was detected for {requested_date}."
+    )
     return False
 
 
@@ -300,11 +357,12 @@ def main():
         pretty_date = f"{requested_date[6:8]}-{requested_date[4:6]}-{requested_date[0:4]}" if len(requested_date) == 8 else requested_date
         venue = cfg.get("venue_label") or cfg.get("theatre") or cfg.get("venue_code", "")
         message = (
-            "🎬 Booking just OPENED!\n\n"
-            f"{cfg.get('movie', 'Movie')}\n"
+            "🎬 IMAX BOOKING DETECTED!\n\n"
+            "Screen format: IMAX\n"
             f"Theatre: {venue}\n"
             f"Date: {pretty_date}\n\n"
-            f"Book here: {cfg.get('booking_url', cfg['target_url'])}"
+            f"Check available movies and showtimes here:\n"
+            f"{cfg.get('booking_url', cfg['target_url'])}"
         )
         try:
             send_telegram(cfg["telegram_bot_token"], cfg["telegram_chat_id"], message)
