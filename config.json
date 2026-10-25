@@ -1,9 +1,11 @@
 {
-  "detector": "venue_date",
-  "movie": "IMAX",
-  "requested_date": "20261029",
+  "detector": "imax_api_json",
+  "movie": "Any IMAX movie",
+  "theatre": "PVR: Palazzo, The Nexus Vijaya Mall, Chennai",
+  "venue_label": "PVR Palazzo, The Nexus Vijaya Mall, Chennai",
   "venue_code": "PVPZ",
-  "venue_label": "PVR: Palazzo, The Nexus Vijaya Mall, Chennai - IMAX",
-  "url_template": "https://in.bookmyshow.com/cinemas/chennai/pvr-palazzo-the-nexus-vijaya-mall/buytickets/PVPZ/{date}",
+  "region_code": "CHEN",
+  "requested_date": "20261029",
+  "url_template": "https://in.bookmyshow.com/api/v3/mobile/showtimes/byvenue?dateCode={date}&venueCode=PVPZ&regionCode=CHEN&memberId=&appCode=WEBV2",
   "booking_url": "https://in.bookmyshow.com/cinemas/chennai/pvr-palazzo-the-nexus-vijaya-mall/buytickets/PVPZ/20261029"
 }
