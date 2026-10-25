@@ -1,12 +1,9 @@
 {
-  "detector": "api_json",
-  "movie": "Jailer 2 - Tamil",
-  "requested_date": "20261024",
-  "venue_code": "INTO",
-  "region_code": "CHEN",
-  "event_code": "ET00518674",
-  "venue_label": "INOX: The Marina Mall, OMR, Chennai",
-  "url_template": "https://in.bookmyshow.com/api/v3/mobile/showtimes/byvenue?dateCode={date}&venueCode=INTO&regionCode=CHEN&memberId=&appCode=WEBV2&lsId=",
-  "booking_url": "https://in.bookmyshow.com/cinemas/chennai/inox-the-marina-mall-omr/buytickets/INTO/20261024",
-  "min_references": 10
+  "detector": "venue_date",
+  "movie": "IMAX",
+  "requested_date": "20261029",
+  "venue_code": "PVPZ",
+  "venue_label": "PVR: Palazzo, The Nexus Vijaya Mall, Chennai - IMAX",
+  "url_template": "https://in.bookmyshow.com/cinemas/chennai/pvr-palazzo-the-nexus-vijaya-mall/buytickets/PVPZ/{date}",
+  "booking_url": "https://in.bookmyshow.com/cinemas/chennai/pvr-palazzo-the-nexus-vijaya-mall/buytickets/PVPZ/20261029"
 }
