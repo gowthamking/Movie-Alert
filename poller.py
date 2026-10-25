@@ -64,9 +64,9 @@ def load_config():
 
     detector = cfg.get("detector", "api_json")
     required = ["target_url", "telegram_bot_token", "telegram_chat_id"]
-    if detector in ("api_json", "bms_date", "venue_date"):
+    if detector in ("api_json", "imax_api_json", "bms_date", "venue_date"):
         required.append("requested_date")
-    if detector == "api_json":
+    if detector in ("api_json", "imax_api_json"):
         required.extend(["venue_code", "region_code"])
     elif detector not in ("venue_date", "bms_date"):
         required.append("theatre")
@@ -198,6 +198,118 @@ def is_available_api_json(response_text, cfg):
     return False
 
 
+
+
+def is_available_imax_api_json(response_text, cfg):
+    """Detect any IMAX screening in ShowDetails for the exact requested date."""
+    try:
+        payload = json.loads(response_text)
+    except (json.JSONDecodeError, TypeError):
+        preview = str(response_text)[:160].replace("\n", " ")
+        print("IMAX API detector: response was not valid JSON; treating as unavailable.")
+        print(f"IMAX API detector: response preview: {preview!r}")
+        return False
+
+    if not isinstance(payload, dict):
+        print(f"IMAX API detector: expected a JSON object, got {type(payload).__name__}.")
+        return False
+
+    requested = str(cfg.get("requested_date", ""))
+    print("IMAX API detector: JSON parsed successfully.")
+    print("IMAX API detector: top-level keys:", list(payload.keys()))
+
+    date_entries = payload.get("ShowDatesArray", payload.get("showDatesArray", []))
+    if isinstance(date_entries, list):
+        date_codes = []
+        for entry in date_entries:
+            if isinstance(entry, dict):
+                date_code = entry.get(
+                    "DateCode",
+                    entry.get("dateCode", entry.get("Date", entry.get("date", ""))),
+                )
+                if date_code:
+                    date_codes.append(str(date_code))
+            elif isinstance(entry, (str, int)):
+                date_codes.append(str(entry))
+        print("IMAX API detector: dates listed by API:", date_codes)
+        if requested not in date_codes:
+            print(f"IMAX API detector: requested date {requested} is not listed by API.")
+            # Continue checking ShowDetails: some responses include exact-date
+            # details even when the date summary is incomplete.
+    else:
+        print("IMAX API detector: ShowDatesArray missing or not a list.")
+
+    show_details = payload.get("ShowDetails", payload.get("showDetails", []))
+    if isinstance(show_details, dict):
+        show_details = [show_details]
+    if not isinstance(show_details, list):
+        print("IMAX API detector: ShowDetails missing or not a list.")
+        return False
+
+    exact_sections = []
+    for section in show_details:
+        if not isinstance(section, dict):
+            continue
+        section_date = str(
+            section.get(
+                "Date",
+                section.get("DateCode", section.get("date", section.get("dateCode", ""))),
+            )
+        )
+        print("IMAX API detector: ShowDetails date:", section_date)
+        if section_date == requested:
+            exact_sections.append(section)
+
+    if not exact_sections:
+        print(f"IMAX API detector: no ShowDetails for exact date {requested}; fallback dates ignored.")
+        return False
+
+    matches = []
+    for section in exact_sections:
+        for item in _walk(section):
+            showtimes = item.get(
+                "ShowTimes",
+                item.get("showTimes", item.get("Showtimes", item.get("showtimes"))),
+            )
+            if not isinstance(showtimes, list) or not showtimes:
+                continue
+
+            event_name = str(
+                item.get(
+                    "EventName",
+                    item.get("eventName", item.get("EventTitle", item.get("Name", item.get("name", "")))),
+                )
+            )
+            dimension = str(item.get("EventDimension", item.get("eventDimension", "")))
+            context = [event_name, dimension]
+
+            for show in showtimes:
+                if isinstance(show, dict):
+                    for key in ("Attributes", "Attribute", "Format", "Dimension", "EventDimension", "ShowTime", "Time"):
+                        value = show.get(key)
+                        if value is not None:
+                            context.append(json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value))
+
+            if re.search(r"\bimax\b", " ".join(context), re.IGNORECASE):
+                title = event_name or "Unknown movie"
+                times = []
+                for show in showtimes:
+                    if isinstance(show, dict):
+                        value = show.get("ShowTime", show.get("Time", show.get("showTime", show.get("time", ""))))
+                        if value:
+                            times.append(str(value))
+                matches.append((title, times, len(showtimes)))
+
+    if matches:
+        for title, times, count in matches:
+            time_text = ", ".join(times) if times else f"{count} showtime(s)"
+            print(f"IMAX API detector: MATCH on {requested}: {title} | {time_text}")
+        return True
+
+    print(f"IMAX API detector: exact-date section found, but no IMAX showtimes on {requested}.")
+    return False
+
+
 def is_available_bms_date(page_text, cfg):
     tokens = re.findall(r"20\d{6}", page_text)
     if not tokens:
@@ -306,6 +418,8 @@ def is_available(response_text, cfg):
     detector = cfg.get("detector", "api_json")
     if detector == "api_json":
         return is_available_api_json(response_text, cfg)
+    if detector == "imax_api_json":
+        return is_available_imax_api_json(response_text, cfg)
     if detector == "venue_date":
         return is_available_venue_date(response_text, cfg)
     if detector == "bms_date":
