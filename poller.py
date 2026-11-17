@@ -63,6 +63,19 @@ def load_config():
         cfg["target_url"] = cfg["url_template"].format(date=cfg["requested_date"])
 
     detector = cfg.get("detector", "api_json")
+    if detector == "avengers_multi_venue":
+        required = ["requested_date", "region_code", "venues", "telegram_bot_token", "telegram_chat_id"]
+        missing = [key for key in required if not cfg.get(key)]
+        if missing:
+            sys.exit(f"Missing required config: {', '.join(missing)}")
+        if not isinstance(cfg["venues"], list) or not cfg["venues"]:
+            sys.exit("For avengers_multi_venue, 'venues' must be a non-empty list.")
+        for index, venue in enumerate(cfg["venues"], start=1):
+            for key in ("venue_code", "venue_label", "format", "booking_url"):
+                if not venue.get(key):
+                    sys.exit(f"Venue #{index} is missing required field: {key}")
+        return cfg
+
     required = ["target_url", "telegram_bot_token", "telegram_chat_id"]
     if detector in ("api_json", "imax_api_json", "bms_date", "venue_date"):
         required.append("requested_date")
@@ -427,6 +440,223 @@ def is_available(response_text, cfg):
     return is_available_generic(response_text, cfg)
 
 
+
+def fetch_bms_venue_json(cfg, venue):
+    """Fetch one venue's BookMyShow showtimes API response."""
+    params = {
+        "dateCode": str(cfg["requested_date"]),
+        "venueCode": str(venue["venue_code"]),
+        "regionCode": str(cfg["region_code"]),
+        "memberId": "",
+        "appCode": "WEBV2",
+    }
+    base_url = cfg.get(
+        "api_url",
+        "https://in.bookmyshow.com/api/v3/mobile/showtimes/byvenue",
+    )
+    url = base_url + "?" + urllib.parse.urlencode(params)
+    headers = dict(DEFAULT_HEADERS)
+    headers.update(cfg.get("headers", {}))
+
+    scraper_key = os.environ.get("SCRAPERAPI_KEY")
+    if scraper_key:
+        proxy_url = "https://api.scraperapi.com/?" + urllib.parse.urlencode({
+            "api_key": scraper_key, "country_code": "in", "url": url
+        })
+        response = requests.get(proxy_url, headers=headers, timeout=90)
+    else:
+        proxy = os.environ.get("PROXY_URL")
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        response = requests.get(url, headers=headers, timeout=45, proxies=proxies)
+
+    response.raise_for_status()
+    return response.json()
+
+
+def _normalise_text(value):
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _time_sort_key(value):
+    """Convert common BMS time strings to minutes after midnight."""
+    text_value = str(value or "").strip().upper().replace(".", "")
+    match = re.search(r"\b(\d{1,2}):(\d{2})\s*(AM|PM)\b", text_value)
+    if match:
+        hour, minute, meridiem = int(match.group(1)), int(match.group(2)), match.group(3)
+        hour = hour % 12 + (12 if meridiem == "PM" else 0)
+        return hour * 60 + minute
+    match = re.search(r"\b(\d{1,2}):(\d{2})\b", text_value)
+    if match:
+        return int(match.group(1)) * 60 + int(match.group(2))
+    return 24 * 60 + 1
+
+
+def _extract_avengers_format_matches(payload, requested_date, movie_name, desired_format):
+    """Return matching showtimes only from the exact requested-date section."""
+    if not isinstance(payload, dict):
+        return []
+
+    date_entries = payload.get("ShowDatesArray", payload.get("showDatesArray", []))
+    date_codes = []
+    if isinstance(date_entries, list):
+        for entry in date_entries:
+            if isinstance(entry, dict):
+                code = entry.get("DateCode", entry.get("dateCode", entry.get("Date", entry.get("date", ""))))
+            else:
+                code = entry
+            if code not in (None, ""):
+                date_codes.append(str(code))
+
+    if date_codes and requested_date not in date_codes:
+        print(f"  API date list does not include {requested_date}: {date_codes}")
+
+    details = payload.get("ShowDetails", payload.get("showDetails", []))
+    if isinstance(details, dict):
+        details = [details]
+    if not isinstance(details, list):
+        return []
+
+    exact_sections = [
+        section for section in details
+        if isinstance(section, dict)
+        and str(section.get("Date", section.get("DateCode", section.get("date", section.get("dateCode", ""))))) == requested_date
+    ]
+    if not exact_sections:
+        print(f"  No ShowDetails for exact date {requested_date}; redirected/fallback dates ignored.")
+        return []
+
+    wanted_movie = _normalise_text(movie_name)
+    movie_tokens = [token for token in wanted_movie.split() if token]
+    wanted_format = _normalise_text(desired_format)
+    found = []
+
+    def walk(node, inherited_context=""):
+        if isinstance(node, dict):
+            local_parts = [inherited_context]
+            for key in (
+                "EventTitle", "EventName", "Name", "name", "EventDimension",
+                "eventDimension", "Dimension", "Format", "Attributes",
+            ):
+                value = node.get(key)
+                if value is not None:
+                    local_parts.append(
+                        json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                    )
+            context = " ".join(local_parts)
+            showtimes = node.get("ShowTimes", node.get("showTimes", node.get("Showtimes", node.get("showtimes"))))
+            if isinstance(showtimes, list) and showtimes:
+                title_parts = [
+                    str(node.get(k, "")) for k in ("EventName", "eventName", "EventTitle", "Name", "name") if node.get(k)
+                ]
+                title = next((part for part in title_parts if part.strip()), "")
+                normalized_context = _normalise_text(context)
+                # Match both the movie name and its distinctive tokens; BMS may
+                # insert punctuation or a subtitle between words.
+                movie_match = all(token in normalized_context.split() for token in movie_tokens)
+                matching_times = []
+                if movie_match:
+                    for show in showtimes:
+                        show_context = normalized_context
+                        if isinstance(show, dict):
+                            show_parts = []
+                            for key in ("Attributes", "Attribute", "Format", "Dimension", "EventDimension", "ScreenName", "Screen"):
+                                value = show.get(key)
+                                if value is not None:
+                                    show_parts.append(
+                                        json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                                    )
+                            show_context += " " + _normalise_text(" ".join(show_parts))
+                            raw_time = show.get("ShowTime", show.get("Time", show.get("showTime", show.get("time", ""))))
+                        else:
+                            raw_time = show if isinstance(show, (str, int)) else ""
+                        if wanted_format in show_context and raw_time:
+                            matching_times.append(str(raw_time))
+                if matching_times:
+                    found.append({
+                        "title": title or movie_name,
+                        "format": desired_format,
+                        "times": sorted(set(matching_times), key=_time_sort_key),
+                    })
+            for key, child in node.items():
+                if key not in ("ShowTimes", "showTimes", "Showtimes", "showtimes"):
+                    walk(child, context)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child, inherited_context)
+
+    for section in exact_sections:
+        walk(section)
+
+    # Remove duplicate event records caused by nested response wrappers.
+    unique = {}
+    for item in found:
+        key = (item["title"], item["format"], tuple(item["times"]))
+        unique[key] = item
+    return list(unique.values())
+
+
+def run_avengers_multi_venue(cfg, state):
+    requested_date = str(cfg["requested_date"])
+    pretty_date = f"{requested_date[6:8]}-{requested_date[4:6]}-{requested_date[0:4]}"
+    notified = set(state.get("notified_venues", []))
+    newly_notified = []
+
+    venues = sorted(cfg["venues"], key=lambda item: int(item.get("priority", 999)))
+    print(f"Movie: {cfg.get('movie', 'Avengers: Doomsday')} | Date: {requested_date}")
+    for venue in venues:
+        code = str(venue["venue_code"])
+        label = venue["venue_label"]
+        screen_format = venue["format"]
+        print(f"Checking {label} ({code}) for {screen_format}...")
+
+        try:
+            payload = fetch_bms_venue_json(cfg, venue)
+        except (requests.RequestException, ValueError) as exc:
+            print(f"  Fetch/JSON failed for {label}: {exc}")
+            continue
+
+        matches = _extract_avengers_format_matches(
+            payload, requested_date, cfg.get("movie", "Avengers Doomsday"), screen_format
+        )
+        if not matches:
+            print(f"  No matching {cfg.get('movie', 'Avengers: Doomsday')} {screen_format} showtimes.")
+            continue
+
+        all_times = sorted(
+            {time_value for match in matches for time_value in match["times"]},
+            key=_time_sort_key,
+        )
+        first_show = all_times[0] if all_times else "Showtime available"
+        print(f"  MATCH: {matches[0]['title']} | {screen_format} | first show: {first_show}")
+
+        if code in notified:
+            print(f"  Notification already sent for {code}; skipping duplicate.")
+            continue
+
+        message = (
+            "🎬 AVENGERS: DOOMSDAY — BOOKING DETECTED!\\n\\n"
+            f"Theatre: {label}\\n"
+            f"Format: {screen_format}\\n"
+            f"Date: {pretty_date}\\n"
+            f"First show: {first_show}\\n\\n"
+            f"Book tickets: {venue['booking_url']}"
+        )
+        try:
+            send_telegram(cfg["telegram_bot_token"], cfg["telegram_chat_id"], message)
+            print(f"  Telegram notification sent for {label}.")
+            notified.add(code)
+            newly_notified.append(code)
+        except (requests.RequestException, RuntimeError) as exc:
+            print(f"  Telegram notification failed for {label}: {exc}")
+            return 1
+
+    state["notified_venues"] = sorted(notified)
+    state["requested_date"] = requested_date
+    state["checked_at"] = int(time.time())
+    save_json(STATE_PATH, state)
+    return 0
+
+
 def main():
     cfg = load_config()
 
@@ -451,6 +681,10 @@ def main():
         send_telegram(cfg["telegram_bot_token"], cfg["telegram_chat_id"], message)
         print("Telegram test message sent successfully. Booking check and state tracking were skipped.")
         return 0
+
+    if cfg.get("detector") == "avengers_multi_venue":
+        state = load_json(STATE_PATH, default={"notified_venues": []}) or {"notified_venues": []}
+        return run_avengers_multi_venue(cfg, state)
 
     state = load_json(STATE_PATH, default={"available": False}) or {"available": False}
     label = f"{cfg.get('movie', 'movie')} @ {cfg.get('theatre', cfg.get('venue_code', 'target'))}"
