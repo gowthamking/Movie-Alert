@@ -3,24 +3,28 @@
   "movie": "Avengers: Doomsday",
   "requested_date": "20261217",
   "region_code": "CHEN",
+  "api_url": "https://in.bookmyshow.com/api/v3/mobile/showtimes/byvenue",
   "venues": [
     {
       "venue_code": "PVPZ",
-      "venue_label": "PVR Palazzo",
+      "venue_label": "PVR Palazzo, The Nexus Vijaya Mall",
       "format": "IMAX",
-      "priority": 1
+      "priority": 1,
+      "booking_url": "https://in.bookmyshow.com/cinemas/chennai/pvr-palazzo-the-nexus-vijaya-mall/buytickets/PVPZ/20261217"
     },
     {
       "venue_code": "INTO",
-      "venue_label": "INOX The Marina Mall",
+      "venue_label": "INOX: The Marina Mall, OMR",
       "format": "BIGPIX",
-      "priority": 2
+      "priority": 2,
+      "booking_url": "https://in.bookmyshow.com/cinemas/chennai/inox-the-marina-mall-omr/buytickets/INTO/20261217"
     },
     {
       "venue_code": "RAKK",
-      "venue_label": "Rakki Cinemas OMR",
+      "venue_label": "Rakki Cinemas: OMR, Kelambakkam",
       "format": "EPIQ",
-      "priority": 3
+      "priority": 3,
+      "booking_url": "https://in.bookmyshow.com/cinemas/chennai/rakki-cinemas-omr-kelambakkam/buytickets/RAKK/20261217"
     }
   ]
 }
