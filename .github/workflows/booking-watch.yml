@@ -1,10 +1,13 @@
 name: booking-watch
 
 on:
-  schedule:
-    - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
     inputs:
+      force_check:
+        description: "Run a booking check now, ignoring the time-based schedule"
+        required: false
+        type: boolean
+        default: false
       test_telegram:
         description: "Send a Telegram test message only (skip the booking check)"
         required: false
@@ -37,6 +40,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_TEST_MODE: ${{ inputs.test_telegram }}
+          FORCE_CHECK: ${{ inputs.force_check }}
           # Route through an India egress so BookMyShow doesn't 403 the
           # US-based GitHub runner. Set SCRAPERAPI_KEY (or PROXY_URL) as a secret.
           SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
