@@ -1,5 +1,7 @@
 {
-  "notified_venues": [],
+  "notified_venues": [
+    "INTO"
+  ],
   "requested_date": "20261217",
-  "checked_at": 1795167646
+  "checked_at": 1795168257
 }
