@@ -8,7 +8,9 @@ import sys
 import time
 import urllib.parse
 from collections import Counter
+from datetime import datetime, date, time as dt_time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -464,13 +466,30 @@ def fetch_bms_venue_json(cfg, venue):
             "api_key": scraper_key, "country_code": "in", "url": url
         })
         response = requests.get(proxy_url, headers=headers, timeout=90)
+        credit_cost = response.headers.get("sa-credit-cost") or response.headers.get("x-sa-credit-cost")
+        if response.status_code >= 400:
+            # Do not include the request URL in the exception: it contains the API key.
+            body_preview = (response.text or "")[:250].replace("\n", " ")
+            raise requests.HTTPError(
+                f"ScraperAPI returned HTTP {response.status_code}; response: {body_preview}",
+                response=response,
+            )
     else:
         proxy = os.environ.get("PROXY_URL")
         proxies = {"http": proxy, "https": proxy} if proxy else None
         response = requests.get(url, headers=headers, timeout=45, proxies=proxies)
+        credit_cost = None
+        if response.status_code >= 400:
+            raise requests.HTTPError(
+                f"BookMyShow returned HTTP {response.status_code} for venue {venue['venue_code']}",
+                response=response,
+            )
 
-    response.raise_for_status()
-    return response.json()
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ValueError(f"Venue {venue['venue_code']} returned invalid JSON") from exc
+    return payload, credit_cost
 
 
 def _normalise_text(value):
@@ -595,6 +614,36 @@ def _extract_avengers_format_matches(payload, requested_date, movie_name, desire
     return list(unique.values())
 
 
+
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
+NORMAL_CHECK_TIMES = [(0, 0), (8, 0), (9, 0), (12, 0), (15, 0), (18, 0), (21, 0), (23, 30)]
+HOURLY_START = date(2026, 12, 10)
+MONITOR_END = date(2026, 12, 17)
+SLOT_GRACE_MINUTES = 29
+
+
+def get_due_schedule_slot(now=None):
+    """Return the scheduled IST slot due now, allowing for workflow startup delay."""
+    now = now or datetime.now(INDIA_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=INDIA_TZ)
+    else:
+        now = now.astimezone(INDIA_TZ)
+
+    if now.date() < date(2026, 11, 20) or now.date() > MONITOR_END:
+        return None
+
+    if now.date() >= HOURLY_START:
+        slots = [(hour, 0) for hour in range(24)]
+    else:
+        slots = NORMAL_CHECK_TIMES
+
+    for hour, minute in slots:
+        slot = datetime.combine(now.date(), dt_time(hour, minute), tzinfo=INDIA_TZ)
+        if slot <= now < slot + timedelta(minutes=SLOT_GRACE_MINUTES):
+            return slot.strftime("%Y-%m-%dT%H:%M%z")
+    return None
+
 def run_avengers_multi_venue(cfg, state):
     requested_date = str(cfg["requested_date"])
     pretty_date = f"{requested_date[6:8]}-{requested_date[4:6]}-{requested_date[0:4]}"
@@ -603,14 +652,33 @@ def run_avengers_multi_venue(cfg, state):
 
     venues = sorted(cfg["venues"], key=lambda item: int(item.get("priority", 999)))
     print(f"Movie: {cfg.get('movie', 'Avengers: Doomsday')} | Date: {requested_date}")
+    total_reported_credits = 0.0
+    venues_with_cost = 0
+
     for venue in venues:
         code = str(venue["venue_code"])
         label = venue["venue_label"]
         screen_format = venue["format"]
+
+        # A venue that already sent its one-time alert no longer consumes API credits.
+        if code in notified:
+            print(f"Skipping {label} ({code}): notification already sent; no API request made.")
+            continue
+
         print(f"Checking {label} ({code}) for {screen_format}...")
 
         try:
-            payload = fetch_bms_venue_json(cfg, venue)
+            payload, credit_cost = fetch_bms_venue_json(cfg, venue)
+            if credit_cost not in (None, ""):
+                try:
+                    numeric_cost = float(credit_cost)
+                    total_reported_credits += numeric_cost
+                    venues_with_cost += 1
+                    print(f"  ScraperAPI credit cost: {credit_cost}")
+                except (TypeError, ValueError):
+                    print(f"  ScraperAPI credit-cost header: {credit_cost}")
+            elif os.environ.get("SCRAPERAPI_KEY"):
+                print("  ScraperAPI credit-cost header was not present in this response.")
         except (requests.RequestException, ValueError) as exc:
             print(f"  Fetch/JSON failed for {label}: {exc}")
             continue
@@ -628,10 +696,6 @@ def run_avengers_multi_venue(cfg, state):
         )
         first_show = all_times[0] if all_times else "Showtime available"
         print(f"  MATCH: {matches[0]['title']} | {screen_format} | first show: {first_show}")
-
-        if code in notified:
-            print(f"  Notification already sent for {code}; skipping duplicate.")
-            continue
 
         message = (
             "🎬 AVENGERS: DOOMSDAY — BOOKING DETECTED!\\n\\n"
@@ -653,6 +717,8 @@ def run_avengers_multi_venue(cfg, state):
     state["notified_venues"] = sorted(notified)
     state["requested_date"] = requested_date
     state["checked_at"] = int(time.time())
+    if venues_with_cost:
+        print(f"ScraperAPI reported total credit cost for this run: {total_reported_credits:g} across {venues_with_cost} request(s).")
     save_json(STATE_PATH, state)
     return 0
 
@@ -684,6 +750,20 @@ def main():
 
     if cfg.get("detector") == "avengers_multi_venue":
         state = load_json(STATE_PATH, default={"notified_venues": []}) or {"notified_venues": []}
+        force_check = os.environ.get("FORCE_CHECK", "").strip().lower() in ("1", "true", "yes", "on")
+        if not force_check:
+            due_slot = get_due_schedule_slot()
+            if due_slot is None:
+                now_ist = datetime.now(INDIA_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+                print(f"Outside configured check time ({now_ist}); no BookMyShow requests made.")
+                return 0
+            if state.get("last_scheduled_slot") == due_slot:
+                print(f"Scheduled slot {due_slot} was already processed; no duplicate API requests made.")
+                return 0
+            state["last_scheduled_slot"] = due_slot
+            print(f"Scheduled check slot: {due_slot} (IST)")
+        else:
+            print("FORCE_CHECK enabled: running a booking check outside the normal schedule.")
         return run_avengers_multi_venue(cfg, state)
 
     state = load_json(STATE_PATH, default={"available": False}) or {"available": False}
